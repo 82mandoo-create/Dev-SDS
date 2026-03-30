@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Shield, Monitor, Bell, Settings,
   LogOut, Menu, X, ChevronDown, Building2, Activity, Lock,
-  Cpu, AlertTriangle, FileCheck, Bot, User
+  Cpu, AlertTriangle, FileCheck, Bot, User, KeyRound
 } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useQuery } from '@tanstack/react-query';
@@ -18,6 +18,7 @@ const menuItems = [
   { path: '/ai-analysis', icon: Bot, label: 'AI 분석', roles: ['admin', 'manager'] },
   { path: '/notifications', icon: Bell, label: '알림', roles: ['admin', 'manager', 'user'] },
   { path: '/users', icon: User, label: '사용자 관리', roles: ['admin'] },
+  { path: '/ai-settings', icon: KeyRound, label: 'AI API 설정', roles: ['admin'] },
   { path: '/settings', icon: Settings, label: '설정', roles: ['admin'] },
 ];
 

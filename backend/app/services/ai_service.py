@@ -7,6 +7,8 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────── Local / Rule-based Analysis ───────────────────────
+
 def analyze_pc_security_local(pc_data: Dict[str, Any]) -> Dict[str, Any]:
     """Local rule-based security analysis without AI"""
     score = 100
@@ -165,49 +167,6 @@ def predict_certificate_renewals(certificates: List[Dict[str, Any]]) -> List[Dic
     return sorted(predictions, key=lambda x: x.get("days_left", 9999))
 
 
-async def analyze_with_openai(prompt: str, context: Dict[str, Any]) -> str:
-    """Use OpenAI API for advanced analysis if configured"""
-    if not settings.OPENAI_API_KEY:
-        return generate_fallback_analysis(context)
-    
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        
-        context_str = json.dumps(context, ensure_ascii=False, default=str)
-        
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """당신은 기업 IT 자산 관리 전문가 AI입니다. 
-                    한국어로 응답하며, 보안 위협을 분석하고 실행 가능한 조치를 제안합니다.
-                    응답은 JSON 형식으로 반환하세요."""
-                },
-                {
-                    "role": "user",
-                    "content": f"{prompt}\n\n데이터: {context_str}"
-                }
-            ],
-            temperature=0.3,
-            max_tokens=1000
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"OpenAI API error: {e}")
-        return generate_fallback_analysis(context)
-
-
-def generate_fallback_analysis(context: Dict[str, Any]) -> str:
-    """Generate analysis without AI"""
-    return json.dumps({
-        "status": "local_analysis",
-        "message": "AI 분석 서비스가 설정되지 않았습니다. 로컬 분석 결과를 사용합니다.",
-        "context_keys": list(context.keys())
-    }, ensure_ascii=False)
-
-
 def detect_anomalies(activities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Detect anomalies in PC activities"""
     anomalies = []
@@ -236,3 +195,216 @@ def detect_anomalies(activities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     
     anomalies.extend(unusual_hours[:5])
     return anomalies
+
+
+# ─────────────────────── Multi-Provider AI Analysis ───────────────────────
+
+async def analyze_with_ai(prompt: str, context: Dict[str, Any], db=None) -> str:
+    """
+    DB에 등록된 기본(default) AI 설정을 사용해 분석 수행.
+    설정이 없거나 실패 시 로컬 분석으로 fallback.
+    """
+    if db is not None:
+        try:
+            from app.models.ai_config import AIConfig, AIConfigStatus
+            default_cfg = db.query(AIConfig).filter(
+                AIConfig.is_default == True,
+                AIConfig.is_active == True,
+            ).first()
+
+            if default_cfg:
+                result = await _call_ai_provider(default_cfg, prompt, context)
+                if result:
+                    # 사용 통계 업데이트
+                    default_cfg.total_requests += 1
+                    default_cfg.last_used_at = datetime.utcnow()
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    return result
+                else:
+                    default_cfg.failed_requests += 1
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+        except Exception as e:
+            logger.error(f"AI provider error: {e}")
+
+    # Fallback: OpenAI via env variable (legacy support)
+    if settings.OPENAI_API_KEY:
+        return await analyze_with_openai(prompt, context)
+
+    return generate_fallback_analysis(context)
+
+
+async def _call_ai_provider(cfg, prompt: str, context: Dict[str, Any]) -> Optional[str]:
+    """등록된 AI 설정으로 실제 API 호출"""
+    from app.models.ai_config import AIProvider
+    context_str = json.dumps(context, ensure_ascii=False, default=str)
+    system_msg = (
+        "당신은 기업 IT 자산 관리 전문가 AI입니다. "
+        "한국어로 응답하며, 보안 위협을 분석하고 실행 가능한 조치를 제안합니다. "
+        "응답은 JSON 형식으로 반환하세요."
+    )
+    full_prompt = f"{prompt}\n\n데이터: {context_str}"
+
+    try:
+        if cfg.provider == AIProvider.OPENAI:
+            return await _openai_chat(cfg.api_key, cfg.model_name, system_msg, full_prompt,
+                                      cfg.max_tokens, cfg.temperature)
+        elif cfg.provider == AIProvider.GEMINI:
+            return await _gemini_generate(cfg.api_key, cfg.model_name, full_prompt, cfg.max_tokens)
+        elif cfg.provider == AIProvider.CLAUDE:
+            return await _claude_messages(cfg.api_key, cfg.model_name, system_msg, full_prompt,
+                                          cfg.max_tokens, cfg.temperature)
+        elif cfg.provider == AIProvider.OLLAMA:
+            return await _ollama_chat(cfg.api_base_url, cfg.model_name, system_msg, full_prompt,
+                                      cfg.max_tokens, cfg.temperature)
+        elif cfg.provider == AIProvider.AZURE_OPENAI:
+            return await _azure_openai_chat(cfg.api_key, cfg.api_base_url, cfg.model_name,
+                                            cfg.deployment_name, cfg.api_version,
+                                            system_msg, full_prompt, cfg.max_tokens, cfg.temperature)
+        elif cfg.provider == AIProvider.CUSTOM:
+            return await _openai_compatible_chat(cfg.api_key, cfg.api_base_url, cfg.model_name,
+                                                 system_msg, full_prompt, cfg.max_tokens, cfg.temperature)
+    except Exception as e:
+        logger.error(f"AI provider call failed [{cfg.provider}]: {e}")
+        return None
+
+
+async def _openai_chat(api_key, model, system_msg, prompt, max_tokens, temperature) -> str:
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key)
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content
+
+
+async def _gemini_generate(api_key, model, prompt, max_tokens) -> str:
+    import httpx
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=payload, params={"key": api_key})
+        resp.raise_for_status()
+        data = resp.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+async def _claude_messages(api_key, model, system_msg, prompt, max_tokens, temperature) -> str:
+    import httpx
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_msg,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["content"][0]["text"]
+
+
+async def _ollama_chat(base_url, model, system_msg, prompt, max_tokens, temperature) -> str:
+    import httpx
+    base_url = (base_url or "http://localhost:11434").rstrip("/")
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "options": {"num_predict": max_tokens, "temperature": temperature},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base_url}/api/chat", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    return data["message"]["content"]
+
+
+async def _azure_openai_chat(api_key, endpoint, model, deployment, api_version,
+                              system_msg, prompt, max_tokens, temperature) -> str:
+    from openai import AsyncAzureOpenAI
+    client = AsyncAzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version=api_version or "2024-02-01",
+    )
+    resp = await client.chat.completions.create(
+        model=deployment or model,
+        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content
+
+
+async def _openai_compatible_chat(api_key, base_url, model, system_msg, prompt,
+                                   max_tokens, temperature) -> str:
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=api_key or "dummy", base_url=base_url)
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content
+
+
+# ─────────────────────── Legacy OpenAI (env key) ───────────────────────
+
+async def analyze_with_openai(prompt: str, context: Dict[str, Any]) -> str:
+    """Use OpenAI API for advanced analysis if configured (legacy env key path)"""
+    if not settings.OPENAI_API_KEY:
+        return generate_fallback_analysis(context)
+
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        context_str = json.dumps(context, ensure_ascii=False, default=str)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "당신은 기업 IT 자산 관리 전문가 AI입니다. 한국어로 응답하며, 보안 위협을 분석하고 실행 가능한 조치를 제안합니다. 응답은 JSON 형식으로 반환하세요."
+                },
+                {
+                    "role": "user",
+                    "content": f"{prompt}\n\n데이터: {context_str}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"OpenAI API error: {e}")
+        return generate_fallback_analysis(context)
+
+
+def generate_fallback_analysis(context: Dict[str, Any]) -> str:
+    """Generate analysis without AI"""
+    return json.dumps({
+        "status": "local_analysis",
+        "message": "AI 분석 서비스가 설정되지 않았습니다. 로컬 분석 결과를 사용합니다.",
+        "context_keys": list(context.keys())
+    }, ensure_ascii=False)

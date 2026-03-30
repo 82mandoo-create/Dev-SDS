@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.v1 import auth, employees, certificates, pcs, notifications, dashboard, users
+from app.api.v1 import auth, employees, certificates, pcs, notifications, dashboard, users, ai_settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -333,6 +333,7 @@ app.include_router(certificates.router, prefix="/api/v1")
 app.include_router(pcs.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
+app.include_router(ai_settings.router, prefix="/api/v1")
 
 
 @app.get("/")
