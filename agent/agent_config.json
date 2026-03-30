@@ -1,0 +1,10 @@
+{
+  "server_url": "http://localhost:8000",
+  "agent_secret": "agent-secret-key-2024",
+  "agent_token": null,
+  "pc_id": null,
+  "heartbeat_interval": 60,
+  "activity_report_interval": 300,
+  "app_scan_interval": 3600,
+  "log_level": "INFO"
+}

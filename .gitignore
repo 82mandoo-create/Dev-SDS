@@ -1,0 +1,44 @@
+# Node modules
+frontend/node_modules/
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+backend/app/**/__pycache__/
+
+# Build outputs
+frontend/dist/
+*.egg-info/
+dist/
+build/
+
+# Databases
+*.db
+*.sqlite3
+
+# Environment files
+.env
+backend/.env
+frontend/.env
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+htmlcov/
+.coverage
