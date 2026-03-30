@@ -126,3 +126,15 @@ export const notificationApi = {
   markAllRead: () => apiClient.post('/notifications/read-all'),
   delete: (id: number) => apiClient.delete(`/notifications/${id}`),
 };
+
+export const aiSettingsApi = {
+  getList: () => apiClient.get('/ai-settings/'),
+  getOne: (id: number) => apiClient.get(`/ai-settings/${id}`),
+  create: (data: any) => apiClient.post('/ai-settings/', data),
+  update: (id: number, data: any) => apiClient.put(`/ai-settings/${id}`, data),
+  delete: (id: number) => apiClient.delete(`/ai-settings/${id}`),
+  test: (id: number) => apiClient.post(`/ai-settings/${id}/test`),
+  setDefault: (id: number) => apiClient.post(`/ai-settings/${id}/set-default`),
+  getProviders: () => apiClient.get('/ai-settings/providers'),
+  getStats: () => apiClient.get('/ai-settings/stats/summary'),
+};

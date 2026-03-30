@@ -21,5 +21,5 @@ def get_db():
 
 
 def init_db():
-    from app.models import user, employee, certificate, pc, notification, activity
+    from app.models import user, employee, certificate, pc, notification, activity, ai_config
     Base.metadata.create_all(bind=engine)

@@ -13,6 +13,7 @@ import AIAnalysisPage from './pages/AIAnalysisPage';
 import NotificationsPage from './pages/NotificationsPage';
 import UsersPage from './pages/UsersPage';
 import ProfilePage from './pages/ProfilePage';
+import AISettingsPage from './pages/AISettingsPage';
 import { useAuthStore } from './stores/authStore';
 
 const queryClient = new QueryClient({
@@ -58,6 +59,7 @@ function App() {
           <Route path="/users" element={<ProtectedRoute requiredRole={['admin']}><UsersPage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute requiredRole={['admin']}><ProfilePage /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="/ai-settings" element={<ProtectedRoute requiredRole={['admin']}><AISettingsPage /></ProtectedRoute>} />
           
           <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} />} />
         </Routes>
